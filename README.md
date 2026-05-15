@@ -1,148 +1,237 @@
 # claude-thermal-optimizer
-Auto-pause Ollama when Claude is idle — zero-config thermal management for macOS power users
 
-![macOS](https://img.shields.io/badge/macOS-Apple_Silicon-black?style=flat&labelColor=555&logo=apple)
-![Shell](https://img.shields.io/badge/Shell-Bash-4EAA25?style=flat&labelColor=555&logo=gnubash)
-![Claude](https://img.shields.io/badge/Claude-Code-cc785c?style=flat&labelColor=555)
-![Ollama](https://img.shields.io/badge/Ollama-Auto_Pause-white?style=flat&labelColor=555)
-![License](https://img.shields.io/badge/License-MIT-blue?style=flat&labelColor=555)
-![Status](https://img.shields.io/badge/Status-Active-brightgreen?style=flat&labelColor=555)
+macOS thermal management for AI workloads: cache clearing, process prioritization, Ollama watchdog, and CPU throttle prevention.
 
-[Concepts](#-concepts) · [How It Works](#-how-it-works) · [Install](#-install) · [Tips](#-tips-and-tricks-8) · [Config](#-configuration) · [Startups](#-startups--businesses)
+![macOS](https://img.shields.io/badge/macOS-Monterey+-blue?style=flat&labelColor=555) ![Thermal](https://img.shields.io/badge/Thermal-Optimized-green?style=flat&labelColor=555) ![Ollama](https://img.shields.io/badge/Ollama-Watchdog-orange?style=flat&labelColor=555) ![License](https://img.shields.io/badge/License-MIT-yellow?style=flat&labelColor=555)
+
+[Concepts](#-concepts) · [How It Works](#-how-it-works) · [Install](#-install) · [Usage](#-usage) · [Config](#-configuration) · [Tips](#-tips-and-tricks-12) · [Troubleshooting](#-troubleshooting) · [Architecture](#-architecture) · [Startups](#️-startups--businesses)
 
 ---
 
 ## 🧠 CONCEPTS
 
 | Feature | Location | Description |
-|---------|----------|-------------|
-| [**Ollama Watchdog**](ollama-claude-watchdog.sh) | `ollama-claude-watchdog.sh` | Monitors Claude CPU every 10s — pauses Ollama after 30s idle |
-| [**LaunchAgent**](com.claude.ollama-watchdog.plist) | `com.claude.ollama-watchdog.plist` | macOS daemon — auto-starts on login, keeps watchdog alive |
-| [**CPU Threshold**](ollama-claude-watchdog.sh#L8) | `IDLE_THRESHOLD=5` | Claude below 5% CPU = idle signal |
-| [**Grace Period**](ollama-claude-watchdog.sh#L10) | `IDLE_GRACE=30` | 30s idle before Ollama models unloaded |
-| [**Live Log**](/tmp/ollama-watchdog.log) | `/tmp/ollama-watchdog.log` | Real-time pause/resume audit trail |
-| [**Multi-model**](ollama-claude-watchdog.sh#L28) | `qwen2.5:7b + llama3` | Stops all loaded models, not just one |
+|---|---|---|
+| Cache Cleaner | `scripts/clear_cache.sh` | Clears system cache, Xcode DerivedData, npm/pip caches |
+| Process Prioritizer | `scripts/nice_processes.sh` | Renice heavy background processes to free CPU for AI |
+| Ollama Watchdog | `scripts/ollama_watchdog.py` | Ensures Ollama stays running — restarts if crashed |
+| Thermal Monitor | `scripts/thermal_monitor.py` | Polls CPU temp, logs anomalies, alerts on sustained high temps |
+| Memory Pressure Relief | `scripts/memory_relief.sh` | Purges inactive memory when pressure exceeds threshold |
+| GPU Load Balancer | `scripts/gpu_balance.sh` | Routes Ollama inference to GPU vs CPU based on thermal state |
+| LaunchAgent Templates | `launchagents/` | Ready-to-install plist files for all watchdog scripts |
+| Disk Cleanup | `scripts/disk_cleanup.sh` | Removes logs, caches, and temp files eating SSD space |
+| CPU Burst Mode | `scripts/cpu_burst.sh` | Temporarily boosts performance for intensive inference tasks |
+| Health Dashboard | `ui/dashboard.py` | Terminal dashboard: temp, memory, CPU, Ollama status |
+| Alert Config | `config/alerts.yaml` | Thresholds for CPU temp, memory pressure, disk usage |
+| Battery Optimizer | `scripts/battery_optimize.sh` | Throttles background AI tasks when on battery |
 
 ### 🔥 Hot
 
 | Feature | Location | Description |
-|---------|----------|-------------|
-| [**Zero Manual Steps**](ollama-claude-watchdog.sh) | `LaunchAgent` | Loads at login, runs forever, self-heals via `KeepAlive` |
-| [**14% CPU Recovery**](ollama-claude-watchdog.sh) | `ollama stop` | Reclaims ~14% CPU + GPU memory when Claude idles |
-| [**Thermal Guard**](ollama-claude-watchdog.sh) | `watchdog loop` | Designed specifically for Mac thermal throttle prevention |
+|---|---|---|
+| Ollama Watchdog | `scripts/ollama_watchdog.py` | Ollama must NEVER die — watchdog restarts in <30s |
+| Thermal Monitor | `scripts/thermal_monitor.py` | Catches thermal throttling before it slows inference |
+| Memory Relief | `scripts/memory_relief.sh` | LLM inference needs clean RAM — purges inactive pages |
+| Health Dashboard | `ui/dashboard.py` | Live terminal view: all system metrics at a glance |
+| LaunchAgents | `launchagents/` | Install once — all watchdogs auto-start on boot |
 
 ---
 
 ## ⚙️ HOW IT WORKS
 
 ```
-Claude Active (CPU > 5%)  →  Ollama stays loaded  →  instant model responses
-        ↓ 30s idle
-Claude Idle (CPU < 5%)   →  ollama stop [models]  →  14% CPU freed
-        ↓ Claude wakes
-Claude Active again       →  Ollama unpaused       →  loads on next call
-```
+macOS Boot
+    │
+    └── LaunchAgents load:
+        ├── ollama_watchdog.py    (60s poll)
+        ├── thermal_monitor.py   (30s poll)
+        └── memory_relief.sh     (5min poll)
 
-**Why this matters:**
-- Ollama idles at ~14% CPU even when not serving requests
-- On Apple Silicon, idle GPU load = thermal throttle = slower Claude
-- This daemon eliminates the waste automatically
+During AI Workload:
+    CPU Temp > 85°C
+        └── thermal_monitor.py
+            ├── log to thermal_log.jsonl
+            ├── send alert if sustained >2min
+            └── trigger memory_relief.sh
+
+    Ollama crash detected
+        └── ollama_watchdog.py
+            ├── restart: `ollama serve`
+            └── verify: health check endpoint
+
+    Memory pressure > 80%
+        └── memory_relief.sh
+            └── purge inactive pages
+```
 
 ---
 
 ## 🚀 INSTALL
 
-### 1. Clone
 ```bash
 git clone https://github.com/hmzainjamil/claude-thermal-optimizer
 cd claude-thermal-optimizer
+
+# Python deps
+pip install psutil requests rich
+
+# Install all LaunchAgents
+bash scripts/install_launchagents.sh
+
+# Verify installation
+launchctl list | grep thermal
+
+# Check current system health
+python3 ui/dashboard.py
+
+# Manual thermal relief
+bash scripts/clear_cache.sh
+bash scripts/memory_relief.sh
 ```
 
-### 2. Install watchdog
+---
+
+## 📟 USAGE
+
 ```bash
-cp ollama-claude-watchdog.sh ~/.claude/bin/
-chmod +x ~/.claude/bin/ollama-claude-watchdog.sh
-```
+# Live health dashboard
+python3 ui/dashboard.py
 
-### 3. Install LaunchAgent
-```bash
-cp com.claude.ollama-watchdog.plist ~/Library/LaunchAgents/
-launchctl load ~/Library/LaunchAgents/com.claude.ollama-watchdog.plist
-```
+# Manual cache clear
+bash scripts/clear_cache.sh
 
-### 4. Verify
-```bash
-tail -f /tmp/ollama-watchdog.log
-```
+# Check Ollama status
+python3 scripts/ollama_watchdog.py --status
 
-Expected output:
-```
-Thu May 15 20:19:34 PKT 2026 Watchdog started
-20:20:04 PAUSED (Claude idle 30s)
-20:21:17 RESUMED (Claude active)
+# Force memory purge
+bash scripts/memory_relief.sh --force
+
+# Renice background processes
+bash scripts/nice_processes.sh
+
+# View thermal log
+python3 scripts/thermal_monitor.py --log-view --last 100
+
+# Check disk usage
+bash scripts/disk_cleanup.sh --dry-run
+
+# Run full optimization
+bash scripts/optimize_all.sh
 ```
 
 ---
 
 ## ⚙️ CONFIGURATION
 
-Edit `~/.claude/bin/ollama-claude-watchdog.sh`:
-
 | Variable | Default | Description |
-|----------|---------|-------------|
-| `IDLE_THRESHOLD` | `5` | CPU% below which Claude = idle |
-| `CHECK_INTERVAL` | `10` | Seconds between checks |
-| `IDLE_GRACE` | `30` | Seconds idle before pause |
-
-Add your models to the `pause_ollama()` function:
-```bash
-/usr/local/bin/ollama stop your-model-name 2>/dev/null
-```
+|---|---|---|
+| `THERMAL_ALERT_TEMP_C` | `88` | CPU temp alert threshold (Celsius) |
+| `THERMAL_SUSTAINED_SECONDS` | `120` | Seconds above threshold before alert |
+| `MEMORY_PRESSURE_THRESHOLD` | `0.80` | Memory pressure ratio to trigger relief |
+| `OLLAMA_HEALTH_URL` | `http://localhost:11434` | Ollama health check endpoint |
+| `OLLAMA_RESTART_DELAY_S` | `5` | Seconds to wait before restarting Ollama |
+| `WATCHDOG_POLL_INTERVAL_S` | `60` | How often watchdog checks Ollama |
+| `DISK_WARN_GB_FREE` | `20` | Alert when disk free space below this |
+| `CACHE_CLEAN_INTERVAL_HOURS` | `24` | Auto cache clean interval |
+| `BATTERY_THROTTLE_ENABLED` | `true` | Throttle AI tasks on battery |
+| `LOG_DIR` | `~/.thermal-optimizer/logs/` | Log directory |
 
 ---
 
-## 💡 TIPS AND TRICKS (8)
+## 💡 TIPS AND TRICKS (12)
 
-[thermal](#tips-thermal) · [ollama](#tips-ollama) · [macos](#tips-macos) · [claude](#tips-claude)
+[Thermal](#tips-thermal) · [Ollama](#tips-ollama) · [Memory](#tips-memory) · [Automation](#tips-auto)
 
 <a id="tips-thermal"></a>■ **Thermal Management (3)**
 
 | Tip | Source |
-|-----|--------|
-| Kill `assistantd` + `triald_system` + `modelmanagerd` to save ~60% CPU — they respawn harmlessly | [HMZ](https://github.com/hmzainjamil) |
-| Disable transparency: `defaults write com.apple.universalaccess reduceTransparency -bool true` — reduces WindowServer load | [Apple HIG](https://developer.apple.com/design/human-interface-guidelines/) |
-| `sudo purge` clears inactive RAM pages — run when memory pressure is high | [HMZ](https://github.com/hmzainjamil) |
+|---|---|
+| Run Ollama inference at `nice 10` — prevents it from competing with system tasks | nice_processes.sh |
+| Sustained 90°C+ causes CPU throttle — thermal log helps diagnose inference slowdowns | Thermal monitor |
+| macOS `sysctl -n machdep.xcpm.cpu_thermal_level` shows throttle level (0=none) | macOS sysctl |
 
-<a id="tips-ollama"></a>■ **Ollama (2)**
-
-| Tip | Source |
-|-----|--------|
-| `ollama stop model-name` unloads model from VRAM — faster than killing the process | [Ollama Docs](https://ollama.ai/docs) |
-| Models reload on next `ollama run` call — no need to pre-warm manually | [Ollama Docs](https://ollama.ai/docs) |
-
-<a id="tips-macos"></a>■ **macOS Cleanup (2)**
+<a id="tips-ollama"></a>■ **Ollama Stability (3)**
 
 | Tip | Source |
-|-----|--------|
-| `brew cleanup --prune=all` + `npm cache clean --force` + `sudo purge` = full cache clear | [HMZ](https://github.com/hmzainjamil) |
-| Avast SystemExtension cannot be killed without SIP disable — pause shields in-app instead | [HMZ](https://github.com/hmzainjamil) |
+|---|---|
+| Ollama must NEVER be stopped — watchdog ensures this even on OOM kills | Watchdog design |
+| `OLLAMA_NUM_PARALLEL=1` prevents memory exhaustion on 16GB Macs | Ollama env vars |
+| `OLLAMA_KEEP_ALIVE=60m` keeps models loaded — avoids cold-start latency | Ollama docs |
 
-<a id="tips-claude"></a>■ **Claude Code (1)**
+<a id="tips-memory"></a>■ **Memory Optimization (3)**
 
 | Tip | Source |
-|-----|--------|
-| Claude.app runs 3+ processes — total CPU is sum of all `Claude` entries in `ps aux` | [DigiMinds](https://github.com/hmzainjamil) |
+|---|---|
+| `sudo purge` clears inactive memory — run before large inference tasks | macOS docs |
+| LLM model loading needs ~2× model size in RAM — check free before pulling 70B | Ollama memory guide |
+| Close Chrome before inference — browser eats 4-8GB RAM on typical setups | System profiling |
+
+<a id="tips-auto"></a>■ **Automation (3)**
+
+| Tip | Source |
+|---|---|
+| LaunchAgents survive reboots — install once, forget it | macOS LaunchAgent docs |
+| `battery_optimize.sh` protects MacBook battery health during long inference sessions | Battery guide |
+| Dashboard runs in tmux — keep it open in a corner for passive monitoring | Terminal tips |
+
+---
+
+## 🔧 TROUBLESHOOTING
+
+| Issue | Fix |
+|---|---|
+| Ollama keeps dying | Check `OLLAMA_NUM_PARALLEL` — reduce to 1 if OOM |
+| Watchdog not auto-starting | `launchctl load ~/Library/LaunchAgents/com.hmz.ollama-watchdog.plist` |
+| CPU always throttling | Check `Activity Monitor` → Energy — find CPU hog |
+| Memory pressure won't clear | `sudo purge` in terminal — stronger than script |
+| Dashboard shows wrong temp | Install `osx-cpu-temp`: `brew install osx-cpu-temp` |
+| LaunchAgent fails silently | Check: `cat ~/Library/Logs/thermal-optimizer.log` |
+| Disk cleanup too aggressive | Use `--dry-run` first to preview deletions |
+
+---
+
+## 📊 ARCHITECTURE
+
+```
+claude-thermal-optimizer/
+├── scripts/
+│   ├── ollama_watchdog.py      # Ollama restart guardian
+│   ├── thermal_monitor.py      # CPU temp monitoring
+│   ├── memory_relief.sh        # Memory pressure relief
+│   ├── clear_cache.sh          # System cache clearing
+│   ├── nice_processes.sh       # Process priority tuning
+│   ├── gpu_balance.sh          # GPU/CPU routing
+│   ├── disk_cleanup.sh         # Disk space recovery
+│   ├── cpu_burst.sh            # Temporary boost mode
+│   ├── battery_optimize.sh     # Battery-aware throttling
+│   ├── optimize_all.sh         # Full optimization run
+│   └── install_launchagents.sh # One-command install
+├── launchagents/
+│   ├── com.hmz.ollama-watchdog.plist
+│   ├── com.hmz.thermal-monitor.plist
+│   └── com.hmz.memory-relief.plist
+├── config/
+│   └── alerts.yaml             # Threshold configuration
+├── ui/
+│   └── dashboard.py            # Terminal health dashboard
+├── logs/                       # Thermal and event logs
+└── requirements.txt
+```
 
 ---
 
 ## ☠️ STARTUPS / BUSINESSES
 
 | This Repo / Feature | Replaced |
-|-|-|
-| **Ollama Watchdog** | [Raycast AI](https://raycast.com), [Alfred](https://alfred.app), manual `ollama stop` scripts |
-| **LaunchAgent thermal daemon** | [Macs Fan Control](https://crystalidea.com/macs-fan-control), [TG Pro](https://www.tunabellysoftware.com/tgpro/), [iStatMenus](https://bjango.com/mac/istatmenus/) |
-| **CPU-based model gating** | [LM Studio](https://lmstudio.ai) auto-load, [Jan.ai](https://jan.ai) background services |
-| **Zero-config thermal management** | [Turbo Boost Switcher](https://tbswitcher.rugarciap.com), paid thermal apps |
+|---|---|
+| Ollama Watchdog | Inference dying mid-session, no auto-recovery |
+| Thermal Monitor | Unknown CPU throttling causing slow responses |
+| Memory Relief | LLM OOM kills from browser + Ollama competing |
+| Cache Cleaner | Manual monthly disk cleanup |
+| LaunchAgents | Manual restart of watchdog scripts after reboot |
+| Battery Optimizer | Battery drain from constant AI inference |
+| Health Dashboard | No visibility into why system felt slow |
+| Disk Cleanup | Xcode/npm caches eating 50GB without notice |
 
 ---
 
@@ -151,62 +240,63 @@ Add your models to the `pause_ollama()` function:
 [![Star History Chart](https://api.star-history.com/svg?repos=hmzainjamil/claude-thermal-optimizer&type=Date)](https://star-history.com/#hmzainjamil/claude-thermal-optimizer&Date)
 
 ---
+<div align="center">Built by <a href="https://github.com/hmzainjamil">HMZ</a> · Part of HMZ Claude AI System</div>
 
 ---
 
-## 🏗 ARCHITECTURE
+## 🔄 CONTRIBUTING
+
+PRs welcome. Please:
+1. Fork the repo
+2. Create a feature branch
+3. Add tests for new functionality
+4. Submit PR with description of changes
+
+---
+
+## 📊 THERMAL EVENT LOG FORMAT
+
+```jsonl
+{"ts": "2025-01-15T09:32:11", "cpu_temp_c": 91, "memory_pressure": 0.72, "event": "thermal_alert", "action": "memory_relief_triggered"}
+{"ts": "2025-01-15T09:45:00", "cpu_temp_c": 78, "memory_pressure": 0.55, "event": "normal", "action": null}
+{"ts": "2025-01-15T10:00:00", "ollama_status": "crashed", "event": "watchdog_restart", "action": "ollama_restarted"}
+```
+
+---
+
+## 🖥️ HEALTH DASHBOARD OUTPUT
 
 ```
-~/.claude/
-├── bin/                    ← All executable scripts
-├── skills/                 ← SKILL.md files for Claude
-├── agents/                 ← Agent definition files
-├── tcc-logs/               ← Task execution logs
-│   └── YYYY-MM-DD/         ← Daily log directories
-└── tier0.env               ← API keys for all Tier 0 models
+┌─────────────────────────────────────────┐
+│  SYSTEM HEALTH — 2025-01-15 10:30:00    │
+├─────────────────────────────────────────┤
+│  CPU Temp:      76°C   [████████░░] OK  │
+│  Memory:        68%    [███████░░░] OK  │
+│  Disk Free:     145 GB [████░░░░░░] OK  │
+│  Ollama:        RUNNING on :11434       │
+│  Active Model:  llama3.1:8b (loaded)    │
+│  GPU Layers:    32/32  [METAL]          │
+│  Inference:     ~45 tok/s               │
+└─────────────────────────────────────────┘
 ```
 
-**Dependencies:** Python 3.11+ · Bash · GitHub CLI (`gh`) · Ollama (local models)
-
 ---
 
-## ❓ FAQ
+## ⚙️ LAUNCHAGENT PLIST TEMPLATE
 
-**Q: Do I need all API keys?**
-A: No. Each Tier 0 model is optional. Ollama (free local) works standalone.
-
-**Q: Will this work on Linux/Windows?**
-A: Bash scripts → Linux ✓. Windows needs WSL2. All Python scripts cross-platform.
-
-**Q: How much does it cost to run?**
-A: Groq + Gemini free tiers cover 90% of tasks. DeepSeek/GPT-4o-mini ~$1-5/month heavy use.
-
-**Q: Can I add my own models?**
-A: Yes — add to `tier0.env` + update model list in `tier0-blast`.
-
----
-
-## 📋 CHANGELOG
-
-| Version | Date | Changes |
-|---|---|---|
-| v1.2 | 2026-05-15 | Added ollama watchdog, hermes integration, daily sync |
-| v1.1 | 2026-05-12 | MAE engine, TCC queue, Tier 0 router |
-| v1.0 | 2026-05-10 | Initial release — core scripts + skills |
-
----
-
-## 🔗 RELATED REPOS
-
-| Repo | Relation |
-|---|---|
-| [mae-master-automation-engine](https://github.com/hmzainjamil/mae-master-automation-engine) | Orchestrates this system |
-| [tcc-task-command-center](https://github.com/hmzainjamil/tcc-task-command-center) | Task queue for parallel execution |
-| [tier0-llm-router](https://github.com/hmzainjamil/tier0-llm-router) | LLM routing layer |
-| [hermes-ai-system](https://github.com/hmzainjamil/hermes-ai-system) | Local model orchestration |
-| [claude-ai-system](https://github.com/hmzainjamil/claude-ai-system) | Master backup repo |
-
-
-<div align="center">
-Built by <a href="https://github.com/hmzainjamil">HMZ</a> · Runs on Claude Code + DigiMinds AI Stack
-</div>
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.hmz.ollama-watchdog</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/python3</string>
+    <string>/path/to/ollama_watchdog.py</string>
+  </array>
+  <key>StartInterval</key><integer>60</integer>
+  <key>RunAtLoad</key><true/>
+</dict>
+</plist>
+```
