@@ -1,5 +1,9 @@
 # claude-thermal-optimizer
 
+<!-- HMZ PORTFOLIO STANDARD -->
+> Portfolio status: active · Visibility: public · Source of truth: current repository source.
+<!-- END HMZ PORTFOLIO STANDARD -->
+
 > **Claude Thermal Optimizer** — macOS thermal management: cache clearing, process throttling, Ollama watchdog, CPU monitoring.
 
 <p align="center">
