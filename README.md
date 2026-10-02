@@ -1,154 +1,40 @@
-# claude-thermal-optimizer
+# Claude and Ollama Watchdog
 
-> **Claude Thermal Optimizer** — macOS thermal management: cache clearing, process throttling, Ollama watchdog, CPU monitoring.
+A small macOS shell watchdog that polls aggregate CPU use from processes whose names match Claude, then runs `ollama stop` for two hard-coded model names after a configured idle interval. It does not read thermal sensors, clear caches, throttle processes, or restart Ollama models.
 
-<p align="center"><a href="https://github.com/hmzainjamil/claude-thermal-optimizer">Repository</a> · <a href="https://github.com/hmzainjamil/claude-thermal-optimizer/commits/main">Commits</a> · <a href="https://github.com/hmzainjamil/claude-thermal-optimizer/issues">Issues</a></p>
-<p align="center"><img alt="Documentation" src="https://img.shields.io/badge/documentation-deep%20editorial-lightgrey"> <img alt="Lifecycle" src="https://img.shields.io/badge/lifecycle-active-success"></p>
+## Repository map
 
-<!-- HMZ DEEP README v1 -->
-
-## At a glance
-
-| Field | Current state |
+| Path | Purpose |
 |---|---|
-| Repository | claude-thermal-optimizer |
-| Visibility | Public |
-| Lifecycle | Active |
-| Evidence basis | Current repository documentation and source-visible material |
+| `ollama-claude-watchdog.sh` | Infinite polling loop, process CPU check, model-stop command, and log output |
+| `com.claude.ollama-watchdog.plist` | launchd job example with machine-specific script and log paths |
+| `README.md` | Usage, behavior, and limitations |
 
-## Why this exists
+## What the script does
 
-**Claude Thermal Optimizer** — macOS thermal management: cache clearing, process throttling, Ollama watchdog, CPU monitoring.
+The script samples every 10 seconds. It sums CPU percentages for matching Claude-named processes. When the sum remains below 5 for 30 seconds, it runs:
 
-This README focuses on the repository's documented scope and separates implementation claims from plans, external dependencies, and unsupported outcomes.
+- `/usr/local/bin/ollama stop qwen2.5:7b`
+- `/usr/local/bin/ollama stop llama3:latest`
 
-## 🧠 CONCEPTS
+The paths, model names, thresholds, interval, and log path are hard-coded in the script. Its `resume_ollama` function only changes an internal flag and logs that Claude is active; it does not run `ollama start`. “Idle” is inferred from process CPU use, not from Claude's task state or hardware temperature.
 
-| Feature | Location | Description |
-|---|---|---|
-| CoreEngine | `core/engine.py` | Primary execution logic and orchestration layer |
-| ConfigManager | `config/manager.py` | Environment validation, hot-reload, API key checks |
-| ProviderAdapters | `adapters/` | Per-provider API wrappers with auth + retry logic |
-| TierRouter | `routing/tier0.py` | Ollama→DeepSeek→Gemini→Groq→GPT cost ladder |
-| OutputFormatter | `output/formatter.py` | Caveman-compressed, signal-dense output pipeline |
-| LogManager | `logs/manager.py` | Structured JSON logging to ~/.claude/tcc-logs/ |
-| HookHandler | `hooks/handler.py` | SessionStart/Stop integration for Claude Code |
-| RetryLogic | `core/retry.py` | Exponential backoff + alt-provider on persistent failure |
-| StatusTracker | `core/status.py` | Per-operation metrics: latency, cost, confidence scores |
-| Scheduler | `schedule/scheduler.py` | LaunchAgent-based cron scheduling for automation |
+## launchd configuration
 
-## ⚙️ HOW IT WORKS
+The checked-in plist runs at load and uses `KeepAlive`. It references `/Users/mc/.claude/bin/ollama-claude-watchdog.sh`, while the repository stores the script at its root. It also writes logs under `/tmp`. These machine-specific paths must be reviewed and corrected for the target machine before the plist is loaded. The repository does not include an installer or validated service management procedure.
 
-```
-Input / Trigger (CLI command or hook event)
-    │
-    ▼
-ConfigManager: load .env, validate all provider API keys
-    │
-    ▼
-TierRouter: Ollama → DeepSeek → Gemini → Groq → GPT
-    │        (cost-ordered; local-first enforced always)
-    ▼
-CoreEngine: primary processing with selected provider adapter
-    │
-    ├── ProviderAdapter: API call with rate-limit handling
-    ├── RetryLogic: exponential backoff + alt provider on failure
-    ├── StatusTracker: record latency, cost, confidence score
-    │
-    ▼
-OutputFormatter: caveman-compress result to signal-dense format
-    │
-    ▼
-LogManager: persist full run record to ~/.claude/tcc-logs/
-    │
-    ▼
-stdout / file output / hook callback response
-```
+## Safety and limitations
 
-## 🚀 INSTALL
+- Running the watchdog continuously can stop the named Ollama models after the idle threshold.
+- The CPU process-name match may include multiple Claude processes and does not establish whether a user is actively working.
+- No temperature reading or thermal-management action is implemented.
+- No restart occurs when Claude becomes active.
+- The watchdog writes timestamped events to `/tmp/ollama-watchdog.log`; the plist separately routes stdout and stderr under `/tmp`.
+- Review the script and paths before running or loading it. No run/install commands are provided because the checked-in launchd paths are host-specific and the resume behavior is incomplete.
 
-```bash
-git clone https://github.com/hmzainjamil/claude-thermal-optimizer
-cd claude-thermal-optimizer
-pip install -r requirements.txt
-cp .env.example .env
-# Fill in: GROQ_API_KEY, GEMINI_API_KEY, DEEPSEEK_API_KEY
-# Optional: OPENAI_API_KEY, ANTHROPIC_API_KEY (fallback only)
-python setup.py verify    # confirms all provider connections live
-python setup.py hooks     # installs Claude Code SessionStart/Stop hooks
-mkdir -p ~/.claude/tcc-logs/  # create log directory
-```
+## Validation and release status
 
-## 📟 USAGE
-
-```bash
-# Primary usage — single command fires full pipeline
-python main.py "your goal or task description here"
-
-# Specify provider explicitly (skip auto-routing)
-python main.py --provider groq "summarize this document quickly"
-
-# Output to file (default: stdout)
-python main.py "task description" --output ~/Downloads/result.md
-
-# Dry run — show routing plan without making any API calls
-python main.py --dry-run "test task to check routing"
-
-# Verbose mode — shows provider selection, scores, latency
-python main.py --verbose "research task with full debug output"
-
-# Batch mode — process multiple inputs from file
-python main.py --batch inputs.txt --output ~/Downloads/results/
-
-# Status and health verification
-python main.py status      # show all configured providers + health
-python main.py verify      # test live connections to all providers
-```
-
-## ⚙️ CONFIGURATION
-
-| Variable | Default | Description |
-|---|---|---|
-| `GROQ_API_KEY` | — | Groq Cloud API key (primary fast text provider) |
-| `GEMINI_API_KEY` | — | Google AI Studio key (long-context and multimodal) |
-| `DEEPSEEK_API_KEY` | — | DeepSeek API key (code specialist tasks) |
-| `OPENAI_API_KEY` | — | OpenAI (Tier 1 fallback; used after Tier 0 exhausted) |
-| `ANTHROPIC_API_KEY` | — | Claude (final resort; only on explicit user request) |
-| `OLLAMA_BASE_URL` | `http://localhost:11434` | Local Ollama endpoint (checked first always) |
-| `LOG_DIR` | `~/.claude/tcc-logs/` | Output log directory for all run records |
-| `TIMEOUT_S` | `30` | Per-operation timeout in seconds per provider |
-| `RETRY_COUNT` | `2` | Number of retry attempts before marking failed |
-| `CONFIDENCE_THRESHOLD` | `0.6` | Minimum confidence score to accept output (0.0-1.0) |
-| `COMPRESS_OUTPUT` | `true` | Apply caveman-compression to all outputs |
-| `LOG_LEVEL` | `INFO` | Logging verbosity: DEBUG / INFO / WARN / ERROR |
-| `LOCAL_FIRST` | `true` | Always try Ollama before any paid API call |
-| `AUTO_RETRY_ALT` | `true` | Automatically switch provider on persistent failure |
-| `OUTPUT_DIR` | `~/Downloads` | Default directory for all generated file outputs |
-
-## Validation and evidence
-
-No dedicated test or evaluation section was available in the current README.
-
-## 🔐 SECURITY CONSIDERATIONS
-
-## Limitations
-
-- Planned work is not presented as completed functionality.
-- Quantitative claims require reproducible evidence.
-- External provider behavior and pricing remain external dependencies.
-
-## 📚 RELATED REPOS IN THE HMZ AI SYSTEM
-
-| Repo | Role | Dependency |
-|---|---|---|
-| [G0DM0D3](https://github.com/hmzainjamil/G0DM0D3) | Multi-model racing + Liquid Response | Uses tier0-llm-router |
-| [mae-master-automation-engine](https://github.com/hmzainjamil/mae-master-automation-engine) | Goal decomposition + specialist swarm | Uses tcc, tier0 |
-| [tcc-task-command-center](https://github.com/hmzainjamil/tcc-task-command-center) | Parallel blast + queue + dashboard | Used by mae |
-| [tier0-llm-router](https://github.com/hmzainjamil/tier0-llm-router) | Cost-optimized routing ladder | Used by all |
-| [hermes-ai-system](https://github.com/hmzainjamil/hermes-ai-system) | Persistent agent + 80+ skills | Uses tier0, mcp |
-| [claude-ai-system-backup](https://github.com/hmzainjamil/claude-ai-system-backup) | System backup + restore | Backs up all |
-
-<div align="center">Built by <a href="https://github.com/hmzainjamil">HMZ</a> · Part of the <a href="https://github.com/hmzainjamil/claude-ai-system">HMZ Claude AI System</a> · Zero broken workflows</div>
+The behavior above is documented from the checked-in shell script and plist; neither was executed or loaded during this review. There is no test suite or license file, and GitHub metadata reports no declared license. Do not infer permission to reuse or redistribute the files.
 
 ## Maintainer
 
